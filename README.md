@@ -40,12 +40,22 @@ The application operates locally without external dependencies by default, utili
 
 *Database Initialization:* The database schema is automatically provisioned when the server starts. `initDb()` and `runMigrations()` will initialize all tables in the SQLite database path specified.
 
-### Running the Application
+### Running the Application Locally
 Start the server:
 ```bash
 npm start
 ```
 The server will bind to port 3000 (or `PORT`). Access the dashboard at `http://localhost:3000`.
+
+### Running with Docker (Recommended for Production Deployment)
+Build and run the container with persistent SQLite volume mounting:
+```bash
+# Build Docker image
+docker build -t ai-workflow-saas .
+
+# Run container with persistent volume for SQLite database
+docker run -d -p 3000:3000 -v saas_data:/app/data --name ai-saas ai-workflow-saas
+```
 
 ---
 
@@ -161,8 +171,12 @@ node --test tests/e2e/*.test.js
 ```
 *(Expect 58 passing tests across 14 suites)*
 
-### Full Test Suite
-Together, all 257 tests (199 integration + 58 E2E) pass with zero errors.
+### Full Test Suite (Integration + E2E)
+Run all 257 tests with the master executive scorecard:
+```bash
+npm run test:all
+```
+*(Expect 257 passing tests across 72 suites: 199 integration + 58 E2E, 0 failures, ~4s duration)*
 
 ### Test Architecture
 - **E2E (`tests/e2e`)**: Validates API boundaries, Auth enforcement, Rate limiting, and full cross-feature journeys.

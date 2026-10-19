@@ -3,10 +3,16 @@
   "version": "1.0.0",
   "type": "module",
   "main": "server.js",
+  "engines": {
+    "node": ">=26.0.0"
+  },
   "scripts": {
     "start": "node server.js",
     "test": "node --test tests/integration/*.test.js",
-    "test:e2e": "node --test tests/e2e/*.test.js"
+    "test:integration": "node --test tests/integration/*.test.js",
+    "test:e2e": "node --test tests/e2e/*.test.js",
+    "test:all": "node --test tests/integration/*.test.js && node tests/e2e/run_all.js",
+    "test:scorecard": "node tests/e2e/run_all.js"
   },
   "dependencies": {
     "express": "^4.22.3",
