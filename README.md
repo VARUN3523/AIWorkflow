@@ -23,8 +23,8 @@ Designed with enterprise requirements in mind, the platform enforces strict mult
 ### Installation
 1. Clone the repository and navigate into the project directory:
    ```bash
-   git clone cd https://github.com/VARUN3523/AIWorkflow.git ai_workflow_saas
-   cd ai_workflow_saas
+   git clone https://github.com/VARUN3523/AIWorkflow.git
+   cd AIWorkflow
    ```
 2. Install dependencies:
    ```bash
