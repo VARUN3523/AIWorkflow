@@ -825,7 +825,7 @@ Urgency: Q4 Deployment`;
               <span class="badge badge-subtle code-font">${escapeHtml(step.step_type)}</span>
             </div>
             <div class="flex-gap">
-              <span class="badge ${statusClass}">${step.status}</span>
+              <span class="badge ${statusClass}">${escapeHtml(step.status)}</span>
               <span class="code-font text-xs text-muted">${step.duration_ms ?? 0} ms</span>
               <span class="accordion-toggle-icon">▼</span>
             </div>

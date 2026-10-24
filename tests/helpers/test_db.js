@@ -1,3 +1,5 @@
+process.env.NODE_ENV = process.env.NODE_ENV || 'test';
+
 import { DatabaseSync } from 'node:sqlite';
 import { runMigrations } from '../../src/db/migrations.js';
 import { setDb, closeDb } from '../../src/db/index.js';

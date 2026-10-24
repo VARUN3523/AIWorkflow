@@ -14,6 +14,16 @@ export async function dispatchWebhookTrigger({ token, payload = {} }, db = getDb
     throw err;
   }
 
+  // Reject excessively bloated public webhook payloads (M-3 / P7 remediation: 1MB limit)
+  const payloadString = typeof payload === 'string' ? payload : JSON.stringify(payload || {});
+  const MAX_WEBHOOK_PAYLOAD_BYTES = 1024 * 1024; // 1MB
+  if (Buffer.byteLength(payloadString, 'utf-8') > MAX_WEBHOOK_PAYLOAD_BYTES) {
+    const err = new Error('Payload too large. Webhook payload exceeds maximum allowed size of 1MB');
+    err.statusCode = 413;
+    err.code = 'PAYLOAD_TOO_LARGE';
+    throw err;
+  }
+
   // Find workflow with trigger_type = 'webhook' and matching token in trigger_config
   const candidateRows = db.prepare(`
     SELECT * FROM workflows

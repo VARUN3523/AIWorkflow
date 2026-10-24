@@ -20,6 +20,12 @@ export async function executeWorkflow(
   const startTime = Date.now();
   const startedAtIso = new Date(startTime).toISOString();
 
+  // Bound stored trigger_payload to avoid storing unbounded blobs in SQLite (M-3 / P7)
+  const rawPayloadStr = JSON.stringify(triggerPayload || {});
+  const storedPayloadStr = rawPayloadStr.length > 100000
+    ? JSON.stringify({ truncated: true, preview: rawPayloadStr.slice(0, 10000) })
+    : rawPayloadStr;
+
   // Record initial execution record in DB
   db.prepare(`
     INSERT INTO workflow_executions (
@@ -31,7 +37,7 @@ export async function executeWorkflow(
     workspaceId,
     workflow.id,
     triggerType || workflow.trigger_type || 'manual',
-    JSON.stringify(triggerPayload),
+    storedPayloadStr,
     startedAtIso
   );
 
@@ -219,7 +225,7 @@ export async function executeWorkflow(
           {
             code: processorErr.code || 'STEP_EXCEPTION',
             message: processorErr.message,
-            stack: processorErr.stack
+            stack: process.env.NODE_ENV === 'production' ? undefined : processorErr.stack
           },
           stepDurationMs,
           db

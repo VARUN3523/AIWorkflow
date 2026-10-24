@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authenticate } from '../auth/middleware.js';
+import { authenticate, requireRole } from '../auth/middleware.js';
 import {
   createWorkflow,
   getWorkflow,
@@ -41,7 +41,7 @@ workflowRouter.post('/triggers/webhook/:token', async (req, res, next) => {
 });
 
 // Manual Trigger Dispatcher (POST /api/workflows/triggers/manual)
-workflowRouter.post('/triggers/manual', authenticate, async (req, res, next) => {
+workflowRouter.post('/triggers/manual', authenticate, requireRole('member', 'admin', 'owner'), async (req, res, next) => {
   try {
     const workflowId = req.body.workflow_id || req.body.workflowId;
     if (!workflowId) {
@@ -70,7 +70,7 @@ workflowRouter.post('/triggers/manual', authenticate, async (req, res, next) => 
 });
 
 // Multipart File Upload Trigger (POST /api/workflows/triggers/upload/:id)
-workflowRouter.post('/triggers/upload/:id', authenticate, async (req, res, next) => {
+workflowRouter.post('/triggers/upload/:id', authenticate, requireRole('member', 'admin', 'owner'), async (req, res, next) => {
   try {
     const contentType = req.headers['content-type'] || '';
     let file = null;
@@ -115,7 +115,7 @@ workflowRouter.post('/triggers/upload/:id', authenticate, async (req, res, next)
 // List workflows
 workflowRouter.get('/', authenticate, (req, res, next) => {
   try {
-    const workflows = listWorkflows(req.workspaceId);
+    const workflows = listWorkflows(req.workspaceId, undefined, req.memberRole);
     res.status(200).json({ workflows });
   } catch (err) {
     next(err);
@@ -123,7 +123,7 @@ workflowRouter.get('/', authenticate, (req, res, next) => {
 });
 
 // Create workflow
-workflowRouter.post('/', authenticate, (req, res, next) => {
+workflowRouter.post('/', authenticate, requireRole('admin', 'owner'), (req, res, next) => {
   try {
     const workflow = createWorkflow(req.workspaceId, req.body);
     res.status(201).json({ workflow });
@@ -135,7 +135,7 @@ workflowRouter.post('/', authenticate, (req, res, next) => {
 // Get workflow by ID
 workflowRouter.get('/:id', authenticate, (req, res, next) => {
   try {
-    const workflow = getWorkflow(req.workspaceId, req.params.id);
+    const workflow = getWorkflow(req.workspaceId, req.params.id, undefined, req.memberRole);
     res.status(200).json({ workflow });
   } catch (err) {
     next(err);
@@ -143,7 +143,7 @@ workflowRouter.get('/:id', authenticate, (req, res, next) => {
 });
 
 // Update workflow by ID
-workflowRouter.put('/:id', authenticate, (req, res, next) => {
+workflowRouter.put('/:id', authenticate, requireRole('admin', 'owner'), (req, res, next) => {
   try {
     const workflow = updateWorkflow(req.workspaceId, req.params.id, req.body);
     res.status(200).json({ workflow });
@@ -153,7 +153,7 @@ workflowRouter.put('/:id', authenticate, (req, res, next) => {
 });
 
 // Delete workflow by ID
-workflowRouter.delete('/:id', authenticate, (req, res, next) => {
+workflowRouter.delete('/:id', authenticate, requireRole('admin', 'owner'), (req, res, next) => {
   try {
     const result = deleteWorkflow(req.workspaceId, req.params.id);
     res.status(200).json(result);
@@ -163,7 +163,7 @@ workflowRouter.delete('/:id', authenticate, (req, res, next) => {
 });
 
 // Manual Run Trigger (POST /api/workflows/:id/run)
-workflowRouter.post('/:id/run', authenticate, async (req, res, next) => {
+workflowRouter.post('/:id/run', authenticate, requireRole('member', 'admin', 'owner'), async (req, res, next) => {
   try {
     const payload = req.body?.payload !== undefined ? req.body.payload : req.body;
     const execution = await dispatchManualTrigger({

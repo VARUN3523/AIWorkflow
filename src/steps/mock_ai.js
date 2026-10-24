@@ -152,13 +152,24 @@ export async function mockExtractEntities(rawInput, targetFields = [], options =
 
   // Ensure any explicitly requested target fields exist
   if (Array.isArray(targetFields)) {
-    for (const field of targetFields) {
+    for (const rawField of targetFields) {
+      if (typeof rawField !== 'string' && typeof rawField !== 'number') continue;
+      // Cap field string length and sanitize
+      const field = String(rawField).slice(0, 100).trim();
+      if (!field) continue;
+
       if (!(field in fields)) {
-        // Generic key-value line pattern: e.g. "Tax ID: ..." or "Date: ..."
-        const keyPattern = new RegExp(`(?:${field.replace(/_/g, '[\\s_]')})\\s*[:#]?\\s*([^\\r\\n]+)`, 'i');
-        const match = text.match(keyPattern);
-        if (match) {
-          fields[field] = match[1].trim();
+        // Escape regex special characters in field name to eliminate ReDoS / catastrophic backtracking (H-2 / P4 remediation)
+        const escapedField = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const fieldPattern = escapedField.replace(/_/g, '[\\s_]');
+        try {
+          const keyPattern = new RegExp(`(?:${fieldPattern})\\s*[:#]?\\s*([^\\r\\n]+)`, 'i');
+          const match = text.match(keyPattern);
+          if (match) {
+            fields[field] = match[1].trim();
+          }
+        } catch {
+          // Gracefully ignore any pattern compilation errors
         }
       }
     }

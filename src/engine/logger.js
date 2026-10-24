@@ -16,6 +16,12 @@ export class TraceLogger {
     const logId = `slog_${crypto.randomUUID().replace(/-/g, '')}`;
     const nowIso = new Date().toISOString();
 
+    // M-3 / P7: Bound stored input_data to prevent unbounded storage bloating
+    const rawInput = JSON.stringify(inputData);
+    const boundedInput = rawInput.length > 100000
+      ? JSON.stringify({ truncated: true, preview: rawInput.slice(0, 10000) })
+      : rawInput;
+
     db.prepare(`
       INSERT INTO step_execution_logs (
         id, execution_id, workspace_id, step_id, step_name,
@@ -29,7 +35,7 @@ export class TraceLogger {
       stepName,
       stepType,
       stepOrder,
-      JSON.stringify(inputData),
+      boundedInput,
       nowIso
     );
 
@@ -52,13 +58,19 @@ export class TraceLogger {
   }
 
   static recordStepFailure(logId, errorDetails = {}, durationMs = 0, db = getDb()) {
+    let normalized = errorDetails;
     if (errorDetails instanceof Error) {
-      errorDetails = {
+      normalized = {
         code: errorDetails.code || 'ERROR',
         message: errorDetails.message,
         name: errorDetails.name,
-        stack: errorDetails.stack
+        stack: process.env.NODE_ENV === 'production' ? undefined : errorDetails.stack
       };
+    } else if (errorDetails && typeof errorDetails === 'object') {
+      normalized = { ...errorDetails };
+      if (process.env.NODE_ENV === 'production') {
+        delete normalized.stack;
+      }
     }
 
     const completedAtIso = new Date().toISOString();
@@ -68,7 +80,7 @@ export class TraceLogger {
       SET status = 'failed', error_details = ?, duration_ms = ?, completed_at = ?
       WHERE id = ?
     `).run(
-      JSON.stringify(errorDetails),
+      JSON.stringify(normalized),
       durationMs,
       completedAtIso,
       logId
@@ -85,6 +97,11 @@ export class TraceLogger {
     const logId = `slog_${crypto.randomUUID().replace(/-/g, '')}`;
     const nowIso = new Date().toISOString();
 
+    const rawInput = JSON.stringify(inputData);
+    const boundedInput = rawInput.length > 100000
+      ? JSON.stringify({ truncated: true, preview: rawInput.slice(0, 10000) })
+      : rawInput;
+
     db.prepare(`
       INSERT INTO step_execution_logs (
         id, execution_id, workspace_id, step_id, step_name,
@@ -98,7 +115,7 @@ export class TraceLogger {
       stepName,
       stepType,
       stepOrder,
-      JSON.stringify(inputData),
+      boundedInput,
       nowIso,
       nowIso
     );
@@ -116,21 +133,29 @@ export class TraceLogger {
       ORDER BY step_order ASC
     `).all(executionId, workspaceId);
 
-    return rows.map((row) => ({
-      id: row.id,
-      execution_id: row.execution_id,
-      workspace_id: row.workspace_id,
-      step_id: row.step_id,
-      step_name: row.step_name,
-      step_type: row.step_type,
-      step_order: row.step_order,
-      status: row.status,
-      input_data: row.input_data ? JSON.parse(row.input_data) : null,
-      output_data: row.output_data ? JSON.parse(row.output_data) : null,
-      error_details: row.error_details ? JSON.parse(row.error_details) : null,
-      duration_ms: row.duration_ms ?? 0,
-      started_at: row.started_at,
-      completed_at: row.completed_at
-    }));
+    return rows.map((row) => {
+      let errorDetails = row.error_details ? JSON.parse(row.error_details) : null;
+      if (errorDetails && typeof errorDetails === 'object' && process.env.NODE_ENV === 'production') {
+        const sanitized = { ...errorDetails };
+        delete sanitized.stack;
+        errorDetails = sanitized;
+      }
+      return {
+        id: row.id,
+        execution_id: row.execution_id,
+        workspace_id: row.workspace_id,
+        step_id: row.step_id,
+        step_name: row.step_name,
+        step_type: row.step_type,
+        step_order: row.step_order,
+        status: row.status,
+        input_data: row.input_data ? JSON.parse(row.input_data) : null,
+        output_data: row.output_data ? JSON.parse(row.output_data) : null,
+        error_details: errorDetails,
+        duration_ms: row.duration_ms ?? 0,
+        started_at: row.started_at,
+        completed_at: row.completed_at
+      };
+    });
   }
 }

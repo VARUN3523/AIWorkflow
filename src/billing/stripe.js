@@ -2,7 +2,18 @@ import crypto from 'node:crypto';
 import { getDb } from '../db/index.js';
 
 
-export const DEFAULT_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || 'whsec_test_secret_for_automated_e2e_suite_2026';
+export function getWebhookSecret() {
+  if (process.env.STRIPE_WEBHOOK_SECRET) {
+    return process.env.STRIPE_WEBHOOK_SECRET;
+  }
+  // Only permit the test fallback secret when explicitly in test mode (C-1 / P1 remediation)
+  if (process.env.NODE_ENV === 'test') {
+    return 'whsec_test_secret_for_automated_e2e_suite_2026';
+  }
+  return null;
+}
+
+export const DEFAULT_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || (process.env.NODE_ENV === 'test' ? 'whsec_test_secret_for_automated_e2e_suite_2026' : undefined);
 
 /**
  * Creates a Stripe Checkout Session for plan upgrades (F-BILL-02)
@@ -74,7 +85,15 @@ export function createBillingPortalSession({ workspaceId, returnUrl }, db = getD
  * Validates Stripe webhook HMAC-SHA256 signature (F-BILL-04)
  * Header format: t=<timestamp>,v1=<signature>[,v1=...]
  */
-export function verifyWebhookSignature(payload, signatureHeader, secret = DEFAULT_WEBHOOK_SECRET) {
+export function verifyWebhookSignature(payload, signatureHeader, secret = getWebhookSecret()) {
+  const activeSecret = secret !== undefined && secret !== null ? secret : getWebhookSecret();
+  if (!activeSecret) {
+    const err = new Error('Stripe webhook secret is not configured in environment');
+    err.statusCode = 500;
+    err.code = 'WEBHOOK_SECRET_NOT_CONFIGURED';
+    throw err;
+  }
+
   if (!signatureHeader || typeof signatureHeader !== 'string') {
     const err = new Error('Missing stripe-signature header');
     err.statusCode = 400;
@@ -119,7 +138,7 @@ export function verifyWebhookSignature(payload, signatureHeader, secret = DEFAUL
   }
 
   const signedPayload = `${timestamp}.${payloadString}`;
-  const hmac = crypto.createHmac('sha256', secret);
+  const hmac = crypto.createHmac('sha256', activeSecret);
   hmac.update(signedPayload);
   const expectedSignature = hmac.digest('hex');
   const expectedBuf = Buffer.from(expectedSignature, 'utf-8');

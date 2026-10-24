@@ -208,32 +208,36 @@ export function checkAndIncrementQuota(workspaceId, db = getDb()) {
   // 2. Fetch or initialize usage meter record
   const meter = getOrCreateUsageMeter(workspaceId, currentPeriod, db);
 
-  // 3. Quota check: if runs_count >= limit, block immediately
-  if (meter.runs_count >= limit) {
+  // 3. Atomically check and conditionally increment runs_count in SQLite (M-2 / P8 remediation)
+  const nowIso = new Date().toISOString();
+  const updateResult = db.prepare(`
+    UPDATE usage_meters
+    SET runs_count = runs_count + 1, updated_at = ?
+    WHERE id = ? AND runs_count < ?
+  `).run(nowIso, meter.id, limit);
+
+  if (updateResult.changes === 0) {
+    const currentMeter = db.prepare('SELECT runs_count FROM usage_meters WHERE id = ?').get(meter.id);
+    const currentUsage = currentMeter ? currentMeter.runs_count : limit;
     const err = new Error(`Plan limit of ${limit} runs reached. Please upgrade to Pro.`);
     err.statusCode = 429;
     err.code = 'QUOTA_EXCEEDED';
     err.plan = planId;
-    err.current_usage = meter.runs_count;
+    err.current_usage = currentUsage;
     err.limit = limit;
     throw err;
   }
 
-  // 4. Atomically increment runs_count
-  const nowIso = new Date().toISOString();
-  db.prepare(`
-    UPDATE usage_meters
-    SET runs_count = runs_count + 1, updated_at = ?
-    WHERE id = ?
-  `).run(nowIso, meter.id);
+  const updatedMeter = db.prepare('SELECT runs_count FROM usage_meters WHERE id = ?').get(meter.id);
+  const newRunsUsed = updatedMeter ? updatedMeter.runs_count : (meter.runs_count + 1);
 
   return {
     allowed: true,
     plan: planId,
     plan_id: planId,
     planId: planId,
-    runs_used: meter.runs_count + 1,
-    runsUsed: meter.runs_count + 1,
+    runs_used: newRunsUsed,
+    runsUsed: newRunsUsed,
     runs_limit: limit,
     runsLimit: limit,
     limit

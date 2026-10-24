@@ -9,15 +9,27 @@ const VALID_TRIGGER_TYPES = ['manual', 'webhook', 'file_upload'];
 /**
  * Normalizes a database workflow row into a parsed JS object
  */
-export function formatWorkflow(row) {
+export function formatWorkflow(row, memberRole = null) {
   if (!row) return null;
+  const triggerConfig = row.trigger_config ? JSON.parse(row.trigger_config) : {};
+
+  // Redact/mask sensitive webhook trigger tokens for viewer roles (M-6 / P3 remediation)
+  if (memberRole === 'viewer' && triggerConfig) {
+    if (triggerConfig.webhook_token) {
+      triggerConfig.webhook_token = 'whsec_****';
+    }
+    if (triggerConfig.token) {
+      triggerConfig.token = 'whsec_****';
+    }
+  }
+
   return {
     id: row.id,
     workspace_id: row.workspace_id,
     name: row.name,
     description: row.description,
     trigger_type: row.trigger_type,
-    trigger_config: row.trigger_config ? JSON.parse(row.trigger_config) : {},
+    trigger_config: triggerConfig,
     steps: row.steps ? JSON.parse(row.steps) : [],
     status: row.status,
     created_at: row.created_at,
@@ -122,8 +134,14 @@ export function createWorkflow(workspaceId, data = {}, db = getDb()) {
 /**
  * Gets a workflow by ID strictly scoped to caller's workspace
  */
-export function getWorkflow(workspaceId, workflowId, db = getDb()) {
-  const row = db.prepare(`
+export function getWorkflow(workspaceId, workflowId, db = getDb(), memberRole = null) {
+  let effectiveDb = db;
+  let effectiveRole = memberRole;
+  if (typeof db === 'string') {
+    effectiveRole = db;
+    effectiveDb = getDb();
+  }
+  const row = (effectiveDb || getDb()).prepare(`
     SELECT * FROM workflows
     WHERE id = ? AND workspace_id = ?
   `).get(workflowId, workspaceId);
@@ -135,20 +153,26 @@ export function getWorkflow(workspaceId, workflowId, db = getDb()) {
     throw err;
   }
 
-  return formatWorkflow(row);
+  return formatWorkflow(row, effectiveRole);
 }
 
 /**
  * Lists all workflows belonging to caller's workspace
  */
-export function listWorkflows(workspaceId, db = getDb()) {
-  const rows = db.prepare(`
+export function listWorkflows(workspaceId, db = getDb(), memberRole = null) {
+  let effectiveDb = db;
+  let effectiveRole = memberRole;
+  if (typeof db === 'string') {
+    effectiveRole = db;
+    effectiveDb = getDb();
+  }
+  const rows = (effectiveDb || getDb()).prepare(`
     SELECT * FROM workflows
     WHERE workspace_id = ?
     ORDER BY created_at DESC
   `).all(workspaceId);
 
-  return rows.map(formatWorkflow);
+  return rows.map((row) => formatWorkflow(row, effectiveRole));
 }
 
 /**
