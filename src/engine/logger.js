@@ -45,12 +45,17 @@ export class TraceLogger {
   static recordStepSuccess(logId, outputData = {}, durationMs = 0, db = getDb()) {
     const completedAtIso = new Date().toISOString();
 
+    const rawOutput = JSON.stringify(outputData || {});
+    const boundedOutput = rawOutput.length > 100000
+      ? JSON.stringify({ truncated: true, preview: rawOutput.slice(0, 10000) })
+      : rawOutput;
+
     db.prepare(`
       UPDATE step_execution_logs
       SET status = 'success', output_data = ?, duration_ms = ?, completed_at = ?
       WHERE id = ?
     `).run(
-      JSON.stringify(outputData),
+      boundedOutput,
       durationMs,
       completedAtIso,
       logId

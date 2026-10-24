@@ -6,7 +6,7 @@ import { setupTestDb } from '../helpers/test_db.js';
 import { createStripeSignature, STRIPE_TEST_WEBHOOK_SECRET, createCheckoutSessionCompletedEvent } from '../fixtures/stripe.js';
 import { mockExtractEntities } from '../../src/steps/mock_ai.js';
 import { TraceLogger } from '../../src/engine/logger.js';
-import { checkAndIncrementQuota } from '../../src/billing/service.js';
+import { checkAndIncrementQuota, getOrCreateUsageMeter, getSubscription } from '../../src/billing/service.js';
 
 describe('Security Audit Fixes Verification Suite (All Findings C-1 to Hygiene)', () => {
   let testDb;
@@ -71,6 +71,34 @@ describe('Security Audit Fixes Verification Suite (All Findings C-1 to Hygiene)'
 
       assert.strictEqual(res.status, 400);
       assert.strictEqual(res.body.error, 'INVALID_SIGNATURE');
+    });
+
+    it('rejects forged signature in production mode when secret is explicitly configured', async () => {
+      const origNodeEnv = process.env.NODE_ENV;
+      const origSecret = process.env.STRIPE_WEBHOOK_SECRET;
+      process.env.NODE_ENV = 'production';
+      process.env.STRIPE_WEBHOOK_SECRET = 'whsec_prod_live_secret_configured_998877';
+
+      try {
+        const event = createCheckoutSessionCompletedEvent('ws_dummy_123');
+        // Attacker creates signature using the hardcoded test secret instead of the live secret
+        const attackerSig = createStripeSignature(event, STRIPE_TEST_WEBHOOK_SECRET);
+
+        const res = await request(app)
+          .post('/api/webhooks/stripe')
+          .set('stripe-signature', attackerSig)
+          .send(event);
+
+        assert.strictEqual(res.status, 400);
+        assert.strictEqual(res.body.error, 'INVALID_SIGNATURE');
+      } finally {
+        process.env.NODE_ENV = origNodeEnv;
+        if (origSecret) {
+          process.env.STRIPE_WEBHOOK_SECRET = origSecret;
+        } else {
+          delete process.env.STRIPE_WEBHOOK_SECRET;
+        }
+      }
     });
   });
 
@@ -145,6 +173,15 @@ describe('Security Audit Fixes Verification Suite (All Findings C-1 to Hygiene)'
         .send({ workflow_id: wfId, payload: 'test' });
       assert.strictEqual(manualRes.status, 403);
       assert.strictEqual(manualRes.body.error, 'INSUFFICIENT_PERMISSIONS');
+
+      // 6. Viewer attempts POST /api/workflows/triggers/upload/:id -> 403
+      const uploadRes = await request(app)
+        .post(`/api/workflows/triggers/upload/${wfId}`)
+        .set('Authorization', `Bearer ${viewer.token}`)
+        .set('x-workspace-id', owner.workspace.id)
+        .send({ file: { name: 'test.txt', content: 'test data' } });
+      assert.strictEqual(uploadRes.status, 403);
+      assert.strictEqual(uploadRes.body.error, 'INSUFFICIENT_PERMISSIONS');
     });
 
     it('permits member role to execute workflows but not create/delete them', async () => {
@@ -208,6 +245,16 @@ describe('Security Audit Fixes Verification Suite (All Findings C-1 to Hygiene)'
       assert.ok(durationMs < 100, `ReDoS extraction took too long: ${durationMs}ms`);
       assert.ok(result);
       assert.ok(result.fields);
+    });
+
+    it('safely handles structured object input with null, undefined, prototype, and non-string targetFields without throwing TypeError', async () => {
+      const objInput = { company: 'Acme Corp', employee_count: 250, revenue: '$5M' };
+      const messyFields = [null, undefined, 123, '__proto__', 'constructor', 'company', 'EMPLOYEE_COUNT'];
+
+      const result = await mockExtractEntities(objInput, messyFields);
+      assert.ok(result);
+      assert.strictEqual(result.fields.company, 'Acme Corp');
+      assert.strictEqual(result.fields.EMPLOYEE_COUNT, 250);
     });
   });
 
@@ -294,6 +341,24 @@ describe('Security Audit Fixes Verification Suite (All Findings C-1 to Hygiene)'
         }
       );
     });
+
+    it('handles parallel initialization of usage meter and subscription without unique constraint crashes', () => {
+      const workspaceId = 'ws_concurrent_init_test';
+      testDb.db.prepare(`
+        INSERT INTO workspaces (id, name, slug, owner_id)
+        VALUES (?, 'Concurrent WS', 'concurrent-ws', 'usr_owner')
+      `).run(workspaceId);
+
+      // Multiple parallel calls to getOrCreateUsageMeter
+      const meters = [1, 2, 3, 4, 5].map(() => getOrCreateUsageMeter(workspaceId, '2026-11', testDb.db));
+      assert.strictEqual(meters.length, 5);
+      meters.forEach(m => assert.ok(m.id));
+
+      // Multiple parallel calls to getSubscription
+      const subs = [1, 2, 3, 4, 5].map(() => getSubscription(workspaceId, testDb.db));
+      assert.strictEqual(subs.length, 5);
+      subs.forEach(s => assert.strictEqual(s.plan_id, 'free'));
+    });
   });
 
   // 6. M-3 / P7: Webhook Payload Size Limits & Stored Payloads
@@ -324,6 +389,48 @@ describe('Security Audit Fixes Verification Suite (All Findings C-1 to Hygiene)'
 
       assert.strictEqual(res.status, 413);
       assert.strictEqual(res.body.error, 'PAYLOAD_TOO_LARGE');
+    });
+
+    it('bounds stored step output_data in trace logs to 100KB with preview', async () => {
+      const owner = await registerUser('bound_owner@corp.com', 'Bound Owner', 'Bound WS');
+      const executionId = 'exec_bound_output_test';
+
+      const wfRes = await request(app)
+        .post('/api/workflows')
+        .set('Authorization', `Bearer ${owner.token}`)
+        .set('x-workspace-id', owner.workspace.id)
+        .send({
+          name: 'Bound Output Test Workflow',
+          steps: [{ id: 's1', name: 'Step 1', type: 'doc_extraction', order: 1 }]
+        });
+      assert.strictEqual(wfRes.status, 201);
+      const workflowId = wfRes.body.workflow.id;
+
+      testDb.db.prepare(`
+        INSERT INTO workflow_executions (id, workspace_id, workflow_id, trigger_type, status, started_at)
+        VALUES (?, ?, ?, 'manual', 'running', datetime('now'))
+      `).run(executionId, owner.workspace.id, workflowId);
+
+      const logId = TraceLogger.startStepLog({
+        executionId,
+        workspaceId: owner.workspace.id,
+        stepId: 'step_1',
+        stepName: 'Step 1',
+        stepType: 'doc_extraction',
+        stepOrder: 1,
+        inputData: { test: true }
+      }, testDb.db);
+
+      const massiveOutput = {
+        data: 'y'.repeat(120000)
+      };
+
+      TraceLogger.recordStepSuccess(logId, massiveOutput, 50, testDb.db);
+
+      const logs = TraceLogger.getExecutionLogs(executionId, owner.workspace.id, testDb.db);
+      assert.strictEqual(logs.length, 1);
+      assert.strictEqual(logs[0].output_data.truncated, true);
+      assert.ok(logs[0].output_data.preview.length <= 10000);
     });
   });
 
@@ -376,6 +483,19 @@ describe('Security Audit Fixes Verification Suite (All Findings C-1 to Hygiene)'
       } finally {
         process.env.NODE_ENV = origEnv;
       }
+    });
+
+    it('returns HTTP 413 PAYLOAD_TOO_LARGE when global JSON payload exceeds 2MB limit', async () => {
+      const hugeJson = {
+        data: 'z'.repeat(2.2 * 1024 * 1024)
+      };
+
+      const res = await request(app)
+        .post('/api/auth/login')
+        .send(hugeJson);
+
+      assert.strictEqual(res.status, 413);
+      assert.strictEqual(res.body.error, 'PAYLOAD_TOO_LARGE');
     });
   });
 });

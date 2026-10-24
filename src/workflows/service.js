@@ -11,16 +11,28 @@ const VALID_TRIGGER_TYPES = ['manual', 'webhook', 'file_upload'];
  */
 export function formatWorkflow(row, memberRole = null) {
   if (!row) return null;
-  const triggerConfig = row.trigger_config ? JSON.parse(row.trigger_config) : {};
+  let triggerConfig = {};
+  try {
+    triggerConfig = row.trigger_config ? JSON.parse(row.trigger_config) : {};
+  } catch {
+    triggerConfig = {};
+  }
 
   // Redact/mask sensitive webhook trigger tokens for viewer roles (M-6 / P3 remediation)
-  if (memberRole === 'viewer' && triggerConfig) {
-    if (triggerConfig.webhook_token) {
-      triggerConfig.webhook_token = 'whsec_****';
+  if (memberRole === 'viewer' && triggerConfig && typeof triggerConfig === 'object') {
+    const sensitiveKeys = ['webhook_token', 'token', 'webhookToken', 'secret', 'webhook_secret'];
+    for (const key of sensitiveKeys) {
+      if (triggerConfig[key]) {
+        triggerConfig[key] = 'whsec_****';
+      }
     }
-    if (triggerConfig.token) {
-      triggerConfig.token = 'whsec_****';
-    }
+  }
+
+  let steps = [];
+  try {
+    steps = row.steps ? JSON.parse(row.steps) : [];
+  } catch {
+    steps = [];
   }
 
   return {
@@ -30,7 +42,7 @@ export function formatWorkflow(row, memberRole = null) {
     description: row.description,
     trigger_type: row.trigger_type,
     trigger_config: triggerConfig,
-    steps: row.steps ? JSON.parse(row.steps) : [],
+    steps,
     status: row.status,
     created_at: row.created_at,
     updated_at: row.updated_at

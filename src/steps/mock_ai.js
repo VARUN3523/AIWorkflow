@@ -36,7 +36,11 @@ export async function mockExtractEntities(rawInput, targetFields = [], options =
 
     // If specific fields were requested, prioritize them
     if (Array.isArray(targetFields) && targetFields.length > 0) {
-      for (const field of targetFields) {
+      for (const rawField of targetFields) {
+        if (typeof rawField !== 'string' && typeof rawField !== 'number') continue;
+        const field = String(rawField).slice(0, 100).trim();
+        if (!field || field === '__proto__' || field === 'constructor' || field === 'prototype') continue;
+
         if (field in rawInput) {
           fields[field] = rawInput[field];
         } else {
@@ -49,8 +53,12 @@ export async function mockExtractEntities(rawInput, targetFields = [], options =
         }
       }
     } else {
-      // Copy all top-level keys
-      Object.assign(fields, rawInput);
+      // Copy all top-level keys safely
+      for (const [k, v] of Object.entries(rawInput)) {
+        if (k !== '__proto__' && k !== 'constructor' && k !== 'prototype') {
+          fields[k] = v;
+        }
+      }
     }
 
     // Ensure common lead fields exist if employee_count / company in input
@@ -156,7 +164,7 @@ export async function mockExtractEntities(rawInput, targetFields = [], options =
       if (typeof rawField !== 'string' && typeof rawField !== 'number') continue;
       // Cap field string length and sanitize
       const field = String(rawField).slice(0, 100).trim();
-      if (!field) continue;
+      if (!field || field === '__proto__' || field === 'constructor' || field === 'prototype') continue;
 
       if (!(field in fields)) {
         // Escape regex special characters in field name to eliminate ReDoS / catastrophic backtracking (H-2 / P4 remediation)

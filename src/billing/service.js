@@ -99,18 +99,15 @@ export function getOrCreateUsageMeter(workspaceId, billingPeriod = getCurrentBil
     const meterId = `meter_${crypto.randomUUID().replace(/-/g, '')}`;
     const nowIso = new Date().toISOString();
     db.prepare(`
-      INSERT INTO usage_meters (id, workspace_id, billing_period, runs_count, ai_steps_count, updated_at)
+      INSERT OR IGNORE INTO usage_meters (id, workspace_id, billing_period, runs_count, ai_steps_count, updated_at)
       VALUES (?, ?, ?, 0, 0, ?)
     `).run(meterId, workspaceId, billingPeriod, nowIso);
 
-    meter = {
-      id: meterId,
-      workspace_id: workspaceId,
-      billing_period: billingPeriod,
-      runs_count: 0,
-      ai_steps_count: 0,
-      updated_at: nowIso
-    };
+    meter = db.prepare(`
+      SELECT id, workspace_id, billing_period, runs_count, ai_steps_count, updated_at
+      FROM usage_meters
+      WHERE workspace_id = ? AND billing_period = ?
+    `).get(workspaceId, billingPeriod);
   }
 
   return meter;
@@ -135,22 +132,17 @@ export function getSubscription(workspaceId, db = getDb()) {
     const subId = `sub_${crypto.randomUUID().replace(/-/g, '')}`;
 
     db.prepare(`
-      INSERT INTO subscriptions (id, workspace_id, plan_id, status, current_period_start, current_period_end)
+      INSERT OR IGNORE INTO subscriptions (id, workspace_id, plan_id, status, current_period_start, current_period_end)
       VALUES (?, ?, 'free', 'active', ?, ?)
     `).run(subId, workspaceId, nowIso, periodEndIso);
 
-    sub = {
-      id: subId,
-      workspace_id: workspaceId,
-      stripe_customer_id: null,
-      stripe_subscription_id: null,
-      plan_id: 'free',
-      status: 'active',
-      current_period_start: nowIso,
-      current_period_end: periodEndIso,
-      cancel_at_period_end: 0,
-      updated_at: nowIso
-    };
+    sub = db.prepare(`
+      SELECT id, workspace_id, stripe_customer_id, stripe_subscription_id,
+             plan_id, status, current_period_start, current_period_end,
+             cancel_at_period_end, updated_at
+      FROM subscriptions
+      WHERE workspace_id = ?
+    `).get(workspaceId);
   }
 
   return sub;
@@ -210,11 +202,20 @@ export function checkAndIncrementQuota(workspaceId, db = getDb()) {
 
   // 3. Atomically check and conditionally increment runs_count in SQLite (M-2 / P8 remediation)
   const nowIso = new Date().toISOString();
-  const updateResult = db.prepare(`
-    UPDATE usage_meters
-    SET runs_count = runs_count + 1, updated_at = ?
-    WHERE id = ? AND runs_count < ?
-  `).run(nowIso, meter.id, limit);
+  let updateResult;
+  if (!Number.isFinite(limit)) {
+    updateResult = db.prepare(`
+      UPDATE usage_meters
+      SET runs_count = runs_count + 1, updated_at = ?
+      WHERE id = ?
+    `).run(nowIso, meter.id);
+  } else {
+    updateResult = db.prepare(`
+      UPDATE usage_meters
+      SET runs_count = runs_count + 1, updated_at = ?
+      WHERE id = ? AND runs_count < ?
+    `).run(nowIso, meter.id, limit);
+  }
 
   if (updateResult.changes === 0) {
     const currentMeter = db.prepare('SELECT runs_count FROM usage_meters WHERE id = ?').get(meter.id);

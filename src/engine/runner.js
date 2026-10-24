@@ -243,6 +243,11 @@ export async function executeWorkflow(
   const completedAtIso = new Date().toISOString();
   const finalStatus = hasFailed ? 'failed' : 'completed';
 
+  const rawSummaryStr = lastOutputSummary ? JSON.stringify(lastOutputSummary) : null;
+  const storedSummaryStr = rawSummaryStr && rawSummaryStr.length > 100000
+    ? JSON.stringify({ truncated: true, preview: rawSummaryStr.slice(0, 10000) })
+    : rawSummaryStr;
+
   db.prepare(`
     UPDATE workflow_executions
     SET status = ?, completed_at = ?, duration_ms = ?, error_message = ?, output_summary = ?
@@ -252,7 +257,7 @@ export async function executeWorkflow(
     completedAtIso,
     totalDurationMs,
     executionErrorMessage,
-    lastOutputSummary ? JSON.stringify(lastOutputSummary) : null,
+    storedSummaryStr,
     executionId
   );
 

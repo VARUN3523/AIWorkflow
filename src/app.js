@@ -54,7 +54,7 @@ app.use((err, req, res, next) => {
   const statusCode = err.statusCode || err.status || 500;
   const errorCode =
     err.code ||
-    (statusCode === 400 ? 'MALFORMED_JSON_PAYLOAD' : statusCode === 429 ? 'QUOTA_EXCEEDED' : 'INTERNAL_ERROR');
+    (statusCode === 400 ? 'MALFORMED_JSON_PAYLOAD' : statusCode === 413 ? 'PAYLOAD_TOO_LARGE' : statusCode === 429 ? 'QUOTA_EXCEEDED' : 'INTERNAL_ERROR');
 
   const payload = {
     error: errorCode,
